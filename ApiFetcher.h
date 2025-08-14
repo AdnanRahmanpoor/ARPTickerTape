@@ -1,3 +1,4 @@
+#pragma once
 #ifndef API_FETCHER_H
 #define API_FETCHER_H
 

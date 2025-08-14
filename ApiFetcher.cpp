@@ -1,14 +1,15 @@
-﻿// ApiFetcher.cpp
-#include "ApiFetcher.h"
+﻿#include "ApiFetcher.h"
 
-// Required headers
-#include <windows.h>           // Essential: declares WinHTTP functions and types
-#include <winhttp.h>           // WinHTTP API
-#include <sstream>             // std::wstringstream, std::stringstream
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#include <winhttp.h>
+#include <sstream>
 #include <string>
-#include <vector>              // std::vector
+#include <vector>
 #include <mutex>
-#include <stdexcept>           // std::runtime_error
+#include <stdexcept>
 
 #pragma comment(lib, "winhttp.lib")
 
@@ -33,7 +34,6 @@ double ApiFetcher::FetchPrice(const std::wstring& symbol) {
             INTERNET_DEFAULT_HTTPS_PORT, 0);
         if (!hConnect) throw std::runtime_error("WinHttpConnect failed");
 
-        // ✅ Use your original API endpoint
         std::wstring path = L"/v8/finance/chart/" + symbol + L"?interval=1d";
 
         hRequest = WinHttpOpenRequest(
@@ -41,18 +41,18 @@ double ApiFetcher::FetchPrice(const std::wstring& symbol) {
             WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE);
         if (!hRequest) throw std::runtime_error("WinHttpOpenRequest failed");
 
-        // ✅ Add realistic headers
+        // Add realistic headers
         WinHttpAddRequestHeaders(
             hRequest,
             L"User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            -1,
+            (DWORD)-1,
             WINHTTP_ADDREQ_FLAG_ADD | WINHTTP_ADDREQ_FLAG_REPLACE
         );
 
         WinHttpAddRequestHeaders(
             hRequest,
             L"Accept: application/json",
-            -1,
+            (DWORD)-1,
             WINHTTP_ADDREQ_FLAG_ADD
         );
 
@@ -78,7 +78,7 @@ double ApiFetcher::FetchPrice(const std::wstring& symbol) {
             }
         } while (dwSize > 0);
 
-        // Debug: log response (very helpful!)
+        // Debug logging
         if (response.empty()) {
             OutputDebugStringW(L"API: Empty response (likely blocked)\n");
         }
@@ -90,10 +90,10 @@ double ApiFetcher::FetchPrice(const std::wstring& symbol) {
             OutputDebugStringA(dbg.c_str());
         }
 
-        // ✅ Use your original parsing logic
+        // Parse the price from JSON response
         size_t pos = response.find("\"regularMarketPrice\":");
         if (pos != std::string::npos) {
-            pos += 21;
+            pos += 21; // Length of "\"regularMarketPrice\":"
             size_t end = response.find_first_of(",}", pos);
             if (end != std::string::npos) {
                 std::string priceStr = response.substr(pos, end - pos);
@@ -109,10 +109,15 @@ double ApiFetcher::FetchPrice(const std::wstring& symbol) {
             OutputDebugStringW(L"regularMarketPrice not found\n");
         }
     }
+    catch (const std::exception& e) {
+        std::string error = "Exception in FetchPrice: " + std::string(e.what()) + "\n";
+        OutputDebugStringA(error.c_str());
+    }
     catch (...) {
-        OutputDebugStringW(L"Exception in FetchPrice\n");
+        OutputDebugStringW(L"Unknown exception in FetchPrice\n");
     }
 
+    // Cleanup
     if (hRequest) WinHttpCloseHandle(hRequest);
     if (hConnect) WinHttpCloseHandle(hConnect);
     if (hSession) WinHttpCloseHandle(hSession);

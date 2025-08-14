@@ -1,5 +1,6 @@
-// Renderer.h
 #pragma once
+#ifndef RENDERER_H
+#define RENDERER_H
 
 #include <windows.h>
 #include <string>
@@ -25,3 +26,5 @@ private:
     static COLORREF GetTextColor();
     static COLORREF GetBackgroundColor();
 };
+
+#endif

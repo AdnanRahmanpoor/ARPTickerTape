@@ -5,6 +5,10 @@
 #include <string>
 #include <vector>
 
-extern std::vector<std::wstring> symbols;  // Defined in ConfigManager
+// Forward declaration - no need to include ConfigManager.h here
+class ConfigManager;
+
+// Note: symbols are now accessed through ConfigManager::symbols
+// This header is kept for compatibility but may not be needed
 
 #endif

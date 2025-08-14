@@ -1,133 +1,177 @@
-// ConfigManager.cpp
+#define NOMINMAX
+#include <windows.h>
 #include "ConfigManager.h"
-#include <windows.h>              // Required before other Windows headers
-#include <shlobj.h>               // SHGetFolderPathW
-#include <Shlwapi.h>              // PathFileExistsW
-#include <algorithm>              // std::clamp
+#include <fstream>
 #include <sstream>
-#include <vector>
+#include <algorithm>
+#include <ShlObj.h>
+#include <filesystem>
 
-#pragma comment(lib, "shlwapi.lib")   // For PathFileExistsW
-#pragma comment(lib, "shell32.lib")   // For SHGetFolderPathW
-
-// Static member initialization
+// Static member definitions
 std::vector<std::wstring> ConfigManager::symbols;
 int ConfigManager::refreshInterval = 60;
-int ConfigManager::scrollSpeed = 5;
-std::wstring ConfigManager::colorScheme = L"Green";
+double ConfigManager::scrollSpeed = 2.0;
 int ConfigManager::windowHeight = 30;
 int ConfigManager::fontSize = 16;
+std::wstring ConfigManager::fontName = L"Arial";
+DWORD ConfigManager::textColor = 0x00FF00; // Green
+DWORD ConfigManager::bgColor = 0x000000;   // Black
+std::wstring ConfigManager::configPath;
+std::wstring ConfigManager::colorScheme = L"Green";
 
-// Helper: Get config file path in %APPDATA%\TickerTape\ticker_config.ini
-std::wstring GetConfigPath() {
-    wchar_t appDataPath[MAX_PATH] = { 0 };
-    if (SUCCEEDED(SHGetFolderPathW(nullptr, CSIDL_APPDATA, nullptr, 0, appDataPath))) {
-        std::wstring path = appDataPath;
-        path += L"\\ARPTickerTape\\ticker_config.ini";
-        return path;
+
+std::wstring ConfigManager::GetConfigPath() {
+    if (!configPath.empty()) {
+        return configPath;
     }
-    // Fallback to executable directory
-    return L"ticker_config.ini";
+
+    wchar_t* appDataPath = nullptr;
+    if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_RoamingAppData, 0, nullptr, &appDataPath))) {
+        configPath = std::wstring(appDataPath) + L"\\ARPTickerTape";
+
+        // Create directory if it doesn't exist
+        std::filesystem::create_directories(configPath);
+
+        configPath += L"\\config.ini";
+        CoTaskMemFree(appDataPath);
+    }
+    else {
+        // Fallback to current directory
+        configPath = L"config.ini";
+    }
+
+    return configPath;
+}
+
+std::wstring ConfigManager::Trim(const std::wstring& str) {
+    size_t start = str.find_first_not_of(L" \t\r\n");
+    if (start == std::wstring::npos) return L"";
+
+    size_t end = str.find_last_not_of(L" \t\r\n");
+    return str.substr(start, end - start + 1);
+}
+
+void ConfigManager::SetDefaults() {
+    symbols.clear();
+    symbols.push_back(L"AAPL");
+    symbols.push_back(L"GOOGL");
+    symbols.push_back(L"MSFT");
+    symbols.push_back(L"TSLA");
+
+    refreshInterval = 60;
+    scrollSpeed = 2.0;
+    windowHeight = 30;
+    fontSize = 16;
+    fontName = L"Arial";
+    textColor = 0x00FF00; // Green
+    bgColor = 0x000000;   // Black
+    colorScheme = L"Green";
 }
 
 void ConfigManager::LoadConfig() {
-    std::wstring configPath = GetConfigPath();
+    SetDefaults(); // Set defaults first
 
-    // Create directory if it doesn't exist
-    size_t pos = configPath.find_last_of(L"\\/");
-    if (pos != std::wstring::npos) {
-        std::wstring dir = configPath.substr(0, pos);
-        CreateDirectoryW(dir.c_str(), nullptr);
-    }
-
-    // Check if config file exists
-    if (!PathFileExistsW(configPath.c_str())) {
-        // Use defaults and save initial config
-        symbols = { L"AAPL", L"MSFT", L"BTC-USD" };
-        refreshInterval = 60;
-        scrollSpeed = 5;
-        colorScheme = L"Green";
-        windowHeight = 30;
-        fontSize = 16;
-
+    std::wifstream file(GetConfigPath());
+    if (!file.is_open()) {
+        // Config file doesn't exist, create it with defaults
         SaveConfig();
         return;
     }
 
-    // Buffer for INI reads
-    wchar_t buffer[1024] = { 0 };
-
-    // Load and parse symbols
-    GetPrivateProfileStringW(L"Settings", L"Symbols", L"AAPL,MSFT,BTC-USD",
-        buffer, _countof(buffer), configPath.c_str());
-
-    symbols.clear();
-    std::wstringstream ss(buffer);
-    std::wstring token;
-    while (std::getline(ss, token, L',')) {
-        // Trim whitespace
-        size_t start = token.find_first_not_of(L" \t");
-        size_t end = token.find_last_not_of(L" \t");
-        if (start != std::wstring::npos && end != std::wstring::npos) {
-            token = token.substr(start, end - start + 1);
+    std::wstring line;
+    while (std::getline(file, line)) {
+        line = Trim(line);
+        if (line.empty() || line[0] == L'#' || line[0] == L';') {
+            continue; // Skip empty lines and comments
         }
-        if (!token.empty()) {
-            symbols.push_back(token);
+
+        size_t pos = line.find(L'=');
+        if (pos == std::wstring::npos) continue;
+
+        std::wstring key = Trim(line.substr(0, pos));
+        std::wstring value = Trim(line.substr(pos + 1));
+
+        if (key == L"symbols") {
+            symbols.clear();
+            std::wstringstream ss(value);
+            std::wstring symbol;
+            while (std::getline(ss, symbol, L',')) {
+                symbol = Trim(symbol);
+                if (!symbol.empty()) {
+                    symbols.push_back(symbol);
+                }
+            }
+        }
+        else if (key == L"refreshInterval") {
+            refreshInterval = std::max(1, _wtoi(value.c_str()));
+        }
+        else if (key == L"scrollSpeed") {
+            scrollSpeed = std::max(0.1, _wtof(value.c_str()));
+        }
+        else if (key == L"windowHeight") {
+            windowHeight = std::max(10, _wtoi(value.c_str()));
+        }
+        else if (key == L"fontSize") {
+            fontSize = std::max(8, _wtoi(value.c_str()));
+        }
+        else if (key == L"fontName") {
+            if (!value.empty()) {
+                fontName = value;
+            }
+        }
+        else if (key == L"textColor") {
+            textColor = wcstoul(value.c_str(), nullptr, 16);
+        }
+        else if (key == L"bgColor") {
+            bgColor = wcstoul(value.c_str(), nullptr, 16);
+        }
+        else if (key == L"colorScheme") {
+            colorScheme = value;
         }
     }
 
-    // Load and clamp settings using std::clamp<int>
-    refreshInterval = std::clamp<int>(
-        GetPrivateProfileIntW(L"Settings", L"RefreshInterval", 60, configPath.c_str()),
-        10, 3600
-    );
+    file.close();
 
-    scrollSpeed = std::clamp<int>(
-        GetPrivateProfileIntW(L"Settings", L"ScrollSpeed", 5, configPath.c_str()),
-        1, 20
-    );
-
-    GetPrivateProfileStringW(L"Settings", L"ColorScheme", L"Green",
-        buffer, _countof(buffer), configPath.c_str());
-    colorScheme = buffer;
-
-    windowHeight = std::clamp<int>(
-        GetPrivateProfileIntW(L"Settings", L"WindowHeight", 30, configPath.c_str()),
-        20, 200
-    );
-
-    fontSize = std::clamp<int>(
-        GetPrivateProfileIntW(L"Settings", L"FontSize", 16, configPath.c_str()),
-        8, 72
-    );
+    // Ensure we have at least one symbol
+    if (symbols.empty()) {
+        symbols.push_back(L"AAPL");
+    }
 }
 
 void ConfigManager::SaveConfig() {
-    std::wstring configPath = GetConfigPath();
-
-    // Build comma-separated symbols string
-    std::wstring symbolsStr;
-    for (size_t i = 0; i < symbols.size(); ++i) {
-        if (i > 0) symbolsStr += L",";
-        symbolsStr += symbols[i];
+    std::wofstream file(GetConfigPath());
+    if (!file.is_open()) {
+        return; // Unable to save
     }
 
-    // Write string values
-    WritePrivateProfileStringW(L"Settings", L"Symbols", symbolsStr.c_str(), configPath.c_str());
-    WritePrivateProfileStringW(L"Settings", L"ColorScheme", colorScheme.c_str(), configPath.c_str());
+    file << L"# ARP Ticker Tape Configuration File\n";
+    file << L"# This file is automatically generated. You can edit it manually if needed.\n\n";
 
-    // Write numeric values using buffer
-    wchar_t numBuffer[32] = { 0 };
+    // Save symbols
+    file << L"symbols=";
+    for (size_t i = 0; i < symbols.size(); ++i) {
+        if (i > 0) file << L",";
+        file << symbols[i];
+    }
+    file << L"\n";
 
-    swprintf_s(numBuffer, _countof(numBuffer), L"%d", refreshInterval);
-    WritePrivateProfileStringW(L"Settings", L"RefreshInterval", numBuffer, configPath.c_str());
+    // Save other settings
+    file << L"refreshInterval=" << refreshInterval << L"\n";
+    file << L"scrollSpeed=" << scrollSpeed << L"\n";
+    file << L"windowHeight=" << windowHeight << L"\n";
+    file << L"fontSize=" << fontSize << L"\n";
+    file << L"fontName=" << fontName << L"\n";
+    file << L"colorScheme=" << colorScheme << L"\n";
 
-    swprintf_s(numBuffer, _countof(numBuffer), L"%d", scrollSpeed);
-    WritePrivateProfileStringW(L"Settings", L"ScrollSpeed", numBuffer, configPath.c_str());
+    // Save colors as hex
+    file << L"textColor=" << std::hex << std::uppercase << textColor << L"\n";
+    file << L"bgColor=" << std::hex << std::uppercase << bgColor << L"\n";
 
-    swprintf_s(numBuffer, _countof(numBuffer), L"%d", windowHeight);
-    WritePrivateProfileStringW(L"Settings", L"WindowHeight", numBuffer, configPath.c_str());
+    file << L"\n# Color format: RRGGBB (hexadecimal)\n";
+    file << L"# Example: FF0000 = Red, 00FF00 = Green, 0000FF = Blue\n";
+    file << L"# Scroll speed: pixels per frame (typically 0.1 to 5.0)\n";
+    file << L"# Refresh interval: seconds between API calls (minimum 1)\n";
+    file << L"# Color scheme: Green, Red, Blue, Yellow, Cyan, Magenta, White\n";
 
-    swprintf_s(numBuffer, _countof(numBuffer), L"%d", fontSize);
-    WritePrivateProfileStringW(L"Settings", L"FontSize", numBuffer, configPath.c_str());
+    file.close();
 }
